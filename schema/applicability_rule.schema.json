@@ -1,0 +1,400 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ecnailpcom.in/schema/applicability_rule",
+  "title": "ApplicabilityRuleExpression",
+  "description": "Schema for structured applicability rule expressions evaluated against a BusinessProfile",
+
+  "definitions": {
+
+    "ConditionNode": {
+      "type": "object",
+      "required": ["type", "field", "operator"],
+      "properties": {
+        "type": { "type": "string", "enum": ["CONDITION"] },
+        "field": {
+          "type": "string",
+          "description": "Field name from BusinessProfile",
+          "examples": [
+            "entity_type", "gst_registered", "gst_scheme",
+            "has_interstate_supply", "has_manufacturing", "has_food_business",
+            "makes_salary_payments", "pf_registered", "esi_registered",
+            "annual_turnover_estimated", "employee_count", "activity_type",
+            "has_ecommerce", "has_exports", "has_imports",
+            "has_foreign_ownership", "is_regulated_sector"
+          ]
+        },
+        "operator": {
+          "type": "string",
+          "enum": ["EQ", "NEQ", "GT", "GTE", "LT", "LTE", "IN", "NOT_IN", "IS_NULL", "IS_NOT_NULL", "CONTAINS"]
+        },
+        "value": {
+          "description": "Scalar value for EQ/NEQ/GT/GTE/LT/LTE operators"
+        },
+        "values": {
+          "type": "array",
+          "description": "Array of values for IN/NOT_IN operators"
+        },
+        "confidence_contribution": {
+          "type": "string",
+          "enum": ["HIGH", "MEDIUM", "LOW"],
+          "default": "HIGH"
+        }
+      }
+    },
+
+    "ThresholdNode": {
+      "type": "object",
+      "required": ["type", "field", "operator", "value"],
+      "properties": {
+        "type": { "type": "string", "enum": ["THRESHOLD"] },
+        "field": {
+          "type": "string",
+          "description": "Numeric field from BusinessProfile"
+        },
+        "operator": {
+          "type": "string",
+          "enum": ["GT", "GTE", "LT", "LTE"]
+        },
+        "value": {
+          "type": "number",
+          "description": "The threshold value"
+        },
+        "if_field_is_band": {
+          "type": ["string", "null"],
+          "description": "If the exact field is unavailable, use this band field instead"
+        },
+        "band_values_above_threshold": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Enum values of the band field that are unambiguously ABOVE the threshold"
+        },
+        "band_values_below_threshold": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Enum values of the band field that are unambiguously BELOW the threshold"
+        },
+        "band_values_ambiguous": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Enum values of the band field where the threshold may or may not be crossed"
+        },
+        "confidence_if_exact": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] },
+        "confidence_if_band_above": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] },
+        "confidence_if_band_below": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] },
+        "confidence_if_band_ambiguous": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] }
+      }
+    },
+
+    "AndNode": {
+      "type": "object",
+      "required": ["type", "conditions"],
+      "properties": {
+        "type": { "type": "string", "enum": ["AND"] },
+        "conditions": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/RuleNode" },
+          "minItems": 2
+        },
+        "confidence_aggregation": {
+          "type": "string",
+          "enum": ["MIN", "AVG"],
+          "default": "MIN",
+          "description": "How to combine confidence from sub-conditions. MIN is correct for AND."
+        }
+      }
+    },
+
+    "OrNode": {
+      "type": "object",
+      "required": ["type", "conditions"],
+      "properties": {
+        "type": { "type": "string", "enum": ["OR"] },
+        "conditions": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/RuleNode" },
+          "minItems": 2
+        },
+        "confidence_aggregation": {
+          "type": "string",
+          "enum": ["MAX", "AVG"],
+          "default": "MAX",
+          "description": "For OR: use MAX confidence of the applicable sub-condition."
+        }
+      }
+    },
+
+    "NotApplicableIfNode": {
+      "type": "object",
+      "required": ["type", "conditions", "reason"],
+      "properties": {
+        "type": { "type": "string", "enum": ["NOT_APPLICABLE_IF"] },
+        "conditions": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/RuleNode" }
+        },
+        "reason": {
+          "type": "string",
+          "description": "Explanation of why this makes the compliance not applicable"
+        }
+      }
+    },
+
+    "StateSpecificNode": {
+      "type": "object",
+      "required": ["type", "field", "covered_states", "uncovered_states_behavior"],
+      "properties": {
+        "type": { "type": "string", "enum": ["STATE_SPECIFIC"] },
+        "field": {
+          "type": "string",
+          "description": "The state field to check (usually principal_state)"
+        },
+        "covered_states": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Z]{2}$" },
+          "description": "States for which we have a modeled rule"
+        },
+        "uncovered_states_behavior": {
+          "type": "string",
+          "enum": ["STATE_SPECIFIC", "NOT_APPLICABLE"],
+          "description": "What to return for states not in covered_states"
+        },
+        "covered_state_rule": {
+          "$ref": "#/definitions/RuleNode",
+          "description": "The rule to evaluate for states in covered_states"
+        }
+      }
+    },
+
+    "EventTriggeredNode": {
+      "type": "object",
+      "required": ["type", "event_field"],
+      "properties": {
+        "type": { "type": "string", "enum": ["EVENT_TRIGGERED"] },
+        "event_field": {
+          "type": "string",
+          "description": "Boolean field in BusinessProfile indicating event has occurred"
+        },
+        "event_date_field": {
+          "type": ["string", "null"],
+          "description": "Date field for the event, used to compute due date"
+        },
+        "if_event_not_occurred": {
+          "type": "string",
+          "enum": ["EVENT_TRIGGERED"],
+          "default": "EVENT_TRIGGERED"
+        },
+        "if_event_occurred": {
+          "$ref": "#/definitions/RuleNode",
+          "description": "Additional conditions to check if event has occurred"
+        }
+      }
+    },
+
+    "RequireFieldNode": {
+      "type": "object",
+      "required": ["type", "required_fields", "if_fields_missing"],
+      "properties": {
+        "type": { "type": "string", "enum": ["REQUIRE_FIELD"] },
+        "required_fields": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "BusinessProfile fields that must not be null for this rule to proceed"
+        },
+        "if_fields_missing": {
+          "type": "string",
+          "enum": ["INSUFFICIENT_DATA"],
+          "default": "INSUFFICIENT_DATA"
+        },
+        "then_rule": {
+          "$ref": "#/definitions/RuleNode",
+          "description": "Rule to evaluate once required fields are present"
+        }
+      }
+    },
+
+    "HumanReviewNode": {
+      "type": "object",
+      "required": ["type", "reason"],
+      "properties": {
+        "type": { "type": "string", "enum": ["HUMAN_REVIEW_REQUIRED"] },
+        "reason": {
+          "type": "string",
+          "description": "Why this compliance requires human/professional review"
+        },
+        "prerequisite_condition": {
+          "$ref": "#/definitions/RuleNode",
+          "description": "Optional: only trigger human review if this condition is met"
+        }
+      }
+    },
+
+    "RuleNode": {
+      "oneOf": [
+        { "$ref": "#/definitions/ConditionNode" },
+        { "$ref": "#/definitions/ThresholdNode" },
+        { "$ref": "#/definitions/AndNode" },
+        { "$ref": "#/definitions/OrNode" },
+        { "$ref": "#/definitions/NotApplicableIfNode" },
+        { "$ref": "#/definitions/StateSpecificNode" },
+        { "$ref": "#/definitions/EventTriggeredNode" },
+        { "$ref": "#/definitions/RequireFieldNode" },
+        { "$ref": "#/definitions/HumanReviewNode" }
+      ]
+    }
+  },
+
+  "type": "object",
+  "required": ["rule_id", "rule_code", "rule_expression", "is_active"],
+  "properties": {
+
+    "rule_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+
+    "rule_code": {
+      "type": "string",
+      "pattern": "^[A-Z0-9_]{3,100}$"
+    },
+
+    "rule_version": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
+
+    "rule_expression": {
+      "$ref": "#/definitions/RuleNode",
+      "description": "The root node of the applicability rule expression tree"
+    },
+
+    "entity_types_handled": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+
+    "threshold_fields_used": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of BusinessProfile fields used as thresholds in this rule"
+    },
+
+    "needs_manual_override_flag": {
+      "type": "boolean",
+      "default": false
+    },
+
+    "rule_description": {
+      "type": "string"
+    },
+
+    "confidence_output": {
+      "type": "string",
+      "enum": ["HIGH", "MEDIUM", "LOW"],
+      "description": "Maximum confidence this rule can produce"
+    },
+
+    "effective_from": { "type": "string", "format": "date" },
+    "effective_to": { "type": ["string", "null"], "format": "date" },
+    "is_active": { "type": "boolean" }
+  },
+
+  "examples": [
+    {
+      "rule_id": "e5f6a7b8-c9d0-1234-efab-345678901234",
+      "rule_code": "APPL_GST_GSTR3B_MONTHLY_REGULAR",
+      "rule_version": 1,
+      "rule_expression": {
+        "type": "AND",
+        "conditions": [
+          {
+            "type": "CONDITION",
+            "field": "gst_registered",
+            "operator": "EQ",
+            "value": true,
+            "confidence_contribution": "HIGH"
+          },
+          {
+            "type": "CONDITION",
+            "field": "gst_scheme",
+            "operator": "EQ",
+            "value": "REGULAR",
+            "confidence_contribution": "HIGH"
+          },
+          {
+            "type": "CONDITION",
+            "field": "gst_filing_frequency",
+            "operator": "EQ",
+            "value": "MONTHLY",
+            "confidence_contribution": "HIGH"
+          }
+        ],
+        "confidence_aggregation": "MIN"
+      },
+      "threshold_fields_used": [],
+      "rule_description": "GSTR-3B Monthly applies if: GST registered + Regular scheme + Monthly filing frequency selected",
+      "confidence_output": "HIGH",
+      "effective_from": "2017-07-01",
+      "is_active": true
+    },
+    {
+      "rule_id": "f6a7b8c9-d0e1-2345-fabc-456789012345",
+      "rule_code": "APPL_EPF_MONTHLY_ECR",
+      "rule_version": 1,
+      "rule_expression": {
+        "type": "OR",
+        "conditions": [
+          {
+            "type": "CONDITION",
+            "field": "pf_registered",
+            "operator": "EQ",
+            "value": true,
+            "confidence_contribution": "HIGH"
+          },
+          {
+            "type": "THRESHOLD",
+            "field": "employee_count",
+            "operator": "GTE",
+            "value": 20,
+            "if_field_is_band": "employee_count_band",
+            "band_values_above_threshold": ["20_49", "50_PLUS"],
+            "band_values_below_threshold": ["ZERO", "1_9"],
+            "band_values_ambiguous": ["10_19"],
+            "confidence_if_exact": "HIGH",
+            "confidence_if_band_above": "HIGH",
+            "confidence_if_band_below": "HIGH",
+            "confidence_if_band_ambiguous": "MEDIUM"
+          }
+        ],
+        "confidence_aggregation": "MAX"
+      },
+      "threshold_fields_used": ["employee_count", "employee_count_band"],
+      "rule_description": "EPF Monthly ECR applies if: already PF registered OR employee count has reached/exceeded 20",
+      "confidence_output": "HIGH",
+      "effective_from": "1952-04-01",
+      "is_active": true
+    },
+    {
+      "rule_id": "a7b8c9d0-e1f2-3456-abcd-567890123456",
+      "rule_code": "APPL_MCA_AOC4_COMPANY",
+      "rule_version": 1,
+      "rule_expression": {
+        "type": "AND",
+        "conditions": [
+          {
+            "type": "CONDITION",
+            "field": "entity_type",
+            "operator": "IN",
+            "values": ["PRIVATE_LIMITED", "PUBLIC_LIMITED", "OPC", "SECTION8_COMPANY"],
+            "confidence_contribution": "HIGH"
+          }
+        ],
+        "confidence_aggregation": "MIN"
+      },
+      "rule_description": "AOC-4 applies to all registered companies (Private Limited, Public Limited, OPC, Section 8)",
+      "confidence_output": "HIGH",
+      "effective_from": "2014-04-01",
+      "is_active": true
+    }
+  ]
+}

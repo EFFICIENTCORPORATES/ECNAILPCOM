@@ -1,0 +1,359 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ecnailpcom.in/schema/api_compliance_output",
+  "title": "CompliancePeriodInstance_APIResponse",
+  "description": "Schema for a single compliance period instance as returned by the API",
+  "type": "object",
+  "required": [
+    "instance_id",
+    "compliance_id",
+    "compliance_code",
+    "title",
+    "domain",
+    "frequency_type",
+    "applicability_status",
+    "period_label",
+    "effective_due_date",
+    "is_overdue",
+    "combined_severity_score",
+    "severity_band",
+    "tracking_status",
+    "source_summary"
+  ],
+  "properties": {
+
+    "instance_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique ID of this period instance. Used for PATCH /status calls."
+    },
+
+    "compliance_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "ID of the compliance master record"
+    },
+
+    "compliance_code": {
+      "type": "string",
+      "description": "Stable human-readable code",
+      "examples": ["GST_GSTR3B_MONTHLY_REGULAR", "IT_ADVANCE_TAX_Q1", "MCA_AOC4_ANNUAL"]
+    },
+
+    "title": {
+      "type": "string",
+      "description": "Full display title"
+    },
+
+    "short_title": {
+      "type": ["string", "null"],
+      "description": "Short title for compact display"
+    },
+
+    "domain": {
+      "type": "string",
+      "enum": ["GST","INCOME_TAX","TDS","TCS","MCA_COMPANY","MCA_LLP","SECRETARIAL",
+               "EPF","ESI","PROFESSIONAL_TAX","SHOPS_ESTABLISHMENTS","FACTORIES",
+               "LABOUR_BONUS","LABOUR_GRATUITY","LABOUR_MINIMUM_WAGES","LABOUR_CONTRACT",
+               "FSSAI","MSME","CUSTOMS_IEC","ENVIRONMENT","BOOKS_RECORDS",
+               "AUDIT_STATUTORY","AUDIT_TAX","ADVANCE_TAX","OTHER"]
+    },
+
+    "frequency_type": {
+      "type": "string",
+      "enum": ["ONE_TIME","MONTHLY","QUARTERLY","HALF_YEARLY","ANNUAL","EVENT_BASED","CONTINUOUS","AS_APPLICABLE"]
+    },
+
+    "obligation_type": {
+      "type": "string",
+      "enum": ["REGISTRATION","RETURN_FILING","TAX_PAYMENT","RECORD_KEEPING",
+               "GOVERNANCE","EVENT_BASED","AUDIT","DISCLOSURE","RENEWAL","CERTIFICATE","INDICATOR"]
+    },
+
+    "applicability_status": {
+      "type": "string",
+      "enum": ["APPLICABLE","LIKELY_APPLICABLE","CHECK_THRESHOLD","EVENT_TRIGGERED",
+               "STATE_SPECIFIC","RECOMMENDED","NOT_APPLICABLE",
+               "INSUFFICIENT_DATA","HUMAN_REVIEW_REQUIRED","FUTURE_TRIGGER"]
+    },
+
+    "applicability_confidence": {
+      "type": "string",
+      "enum": ["HIGH","MEDIUM","LOW"]
+    },
+
+    "why_it_applies": {
+      "type": ["string", "null"],
+      "description": "Plain language explanation of why this compliance applies to this business"
+    },
+
+    "missing_inputs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Profile fields that, if provided, would improve applicability confidence"
+    },
+
+    "period_label": {
+      "type": "string",
+      "description": "Human-readable period, e.g., 'May 2026', 'Q1 FY2025-26', 'FY2025-26'"
+    },
+
+    "period_start": {
+      "type": ["string", "null"],
+      "format": "date"
+    },
+
+    "period_end": {
+      "type": ["string", "null"],
+      "format": "date"
+    },
+
+    "filing_window_opens": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "Date from which filing is allowed. Often = period_end + 1 day."
+    },
+
+    "computed_due_date": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "Due date per base rule (before notification overrides)"
+    },
+
+    "override_active": {
+      "type": "boolean",
+      "description": "Whether a notification is currently extending this due date"
+    },
+
+    "override_notification_reference": {
+      "type": ["string", "null"],
+      "description": "If override_active, the notification number. E.g., 'Notification No. 15/2026-Central Tax'"
+    },
+
+    "effective_due_date": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "The actual due date (= computed_due_date if no override, else the extended date)"
+    },
+
+    "financial_year_label": {
+      "type": "string",
+      "examples": ["FY2025-26"]
+    },
+
+    "is_overdue": {
+      "type": "boolean"
+    },
+
+    "overdue_days": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "If is_overdue = true, how many days past due date"
+    },
+
+    "due_in_days": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "If is_overdue = false, how many days until due date. Null if overdue."
+    },
+
+    "base_severity_score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Inherent severity regardless of current lateness"
+    },
+
+    "dynamic_severity_score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Base score + time escalation based on current overdue_days"
+    },
+
+    "combined_severity_score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+
+    "severity_band": {
+      "type": "string",
+      "enum": ["LOW","MODERATE","HIGH","SEVERE","CRITICAL"]
+    },
+
+    "color_code": {
+      "type": "string",
+      "pattern": "^#[0-9A-F]{6}$",
+      "description": "Hex color for UI heat map rendering",
+      "examples": ["#B71C1C", "#D32F2F", "#E64A19", "#F9A825", "#388E3C"]
+    },
+
+    "penalty_summary": {
+      "type": "object",
+      "description": "Structured penalty/consequence information",
+      "properties": {
+        "late_fee_per_day": {
+          "type": ["number", "null"],
+          "description": "₹ per day late fee"
+        },
+        "late_fee_maximum": {
+          "type": ["number", "null"],
+          "description": "Maximum cap on late fee"
+        },
+        "interest_rate_pa": {
+          "type": ["number", "null"],
+          "description": "Annual interest rate % on outstanding liability"
+        },
+        "flat_penalty": {
+          "type": ["number", "null"],
+          "description": "Fixed penalty amount if applicable"
+        },
+        "prosecution_possible": {
+          "type": "boolean"
+        },
+        "penalty_notes": {
+          "type": ["string", "null"],
+          "description": "Plain language consequence summary"
+        }
+      }
+    },
+
+    "tracking_status": {
+      "type": "string",
+      "enum": ["PENDING","COMPLETED","SKIPPED","NOT_APPLICABLE_THIS_PERIOD"]
+    },
+
+    "completed_on": {
+      "type": ["string", "null"],
+      "format": "date"
+    },
+
+    "completed_by": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "user_id of the person who marked this complete"
+    },
+
+    "completion_notes": {
+      "type": ["string", "null"],
+      "description": "Optional notes like ARN, acknowledgment number, etc."
+    },
+
+    "requires_human_review": {
+      "type": "boolean",
+      "description": "If true, professional verification is recommended before relying on this item"
+    },
+
+    "state_specific_note": {
+      "type": ["string", "null"],
+      "description": "If state-specific rules apply, a note to verify with the specific state"
+    },
+
+    "source_summary": {
+      "type": "object",
+      "required": ["primary_act", "authority", "last_verified", "confidence"],
+      "description": "Source attribution — the core trust feature of the product",
+      "properties": {
+        "primary_act": {
+          "type": "string",
+          "description": "Full name of the primary Act",
+          "examples": ["Central Goods and Services Tax Act, 2017"]
+        },
+        "primary_section": {
+          "type": ["string", "null"],
+          "description": "Section/Rule reference",
+          "examples": ["Section 39", "Rule 61(1)"]
+        },
+        "notification_reference": {
+          "type": ["string", "null"],
+          "description": "Current active notification reference if any",
+          "examples": ["Notification No. 82/2020-Central Tax dated 10.11.2020"]
+        },
+        "authority": {
+          "type": "string",
+          "description": "Issuing authority",
+          "examples": ["CBIC", "CBDT", "MCA", "EPFO", "ESIC"]
+        },
+        "official_url": {
+          "type": ["string", "null"],
+          "format": "uri",
+          "description": "URL to official source text"
+        },
+        "last_verified": {
+          "type": "string",
+          "format": "date",
+          "description": "Date on which this source was last verified as active and correct"
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["HIGH","MEDIUM","LOW"]
+        },
+        "portal_vs_statute_note": {
+          "type": ["string", "null"],
+          "description": "Note if portal practice differs from statutory text"
+        }
+      }
+    }
+  },
+
+  "additionalProperties": false,
+
+  "examples": [
+    {
+      "instance_id": "f7a8b9c0-d1e2-3456-fabc-678901234567",
+      "compliance_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "compliance_code": "GST_GSTR3B_MONTHLY_REGULAR",
+      "title": "GSTR-3B Monthly Return Filing",
+      "short_title": "GSTR-3B",
+      "domain": "GST",
+      "frequency_type": "MONTHLY",
+      "obligation_type": "RETURN_FILING",
+      "applicability_status": "APPLICABLE",
+      "applicability_confidence": "HIGH",
+      "why_it_applies": "Business is GST registered under regular scheme with monthly filing frequency in Maharashtra (Group A state, due date 20th).",
+      "missing_inputs": [],
+      "period_label": "May 2026",
+      "period_start": "2026-05-01",
+      "period_end": "2026-05-31",
+      "filing_window_opens": "2026-06-01",
+      "computed_due_date": "2026-06-20",
+      "override_active": false,
+      "override_notification_reference": null,
+      "effective_due_date": "2026-06-20",
+      "financial_year_label": "FY2025-26",
+      "is_overdue": true,
+      "overdue_days": 3,
+      "due_in_days": null,
+      "base_severity_score": 50,
+      "dynamic_severity_score": 60,
+      "combined_severity_score": 60,
+      "severity_band": "SEVERE",
+      "color_code": "#D32F2F",
+      "penalty_summary": {
+        "late_fee_per_day": 50,
+        "late_fee_maximum": 10000,
+        "interest_rate_pa": 18.0,
+        "flat_penalty": null,
+        "prosecution_possible": false,
+        "penalty_notes": "₹50/day late fee (₹25 CGST + ₹25 SGST) up to ₹10,000 per CGST Act Sec 47. Plus 18% p.a. interest on unpaid tax per Sec 50."
+      },
+      "tracking_status": "PENDING",
+      "completed_on": null,
+      "completed_by": null,
+      "completion_notes": null,
+      "requires_human_review": false,
+      "state_specific_note": null,
+      "source_summary": {
+        "primary_act": "Central Goods and Services Tax Act, 2017",
+        "primary_section": "Section 39 read with Rule 61(1) of CGST Rules, 2017",
+        "notification_reference": null,
+        "authority": "CBIC",
+        "official_url": "https://cbic-gst.gov.in/gst-act-rules-regulations.html",
+        "last_verified": "2026-05-15",
+        "confidence": "HIGH",
+        "portal_vs_statute_note": null
+      }
+    }
+  ]
+}

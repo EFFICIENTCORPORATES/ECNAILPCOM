@@ -1,0 +1,360 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ecnailpcom.in/schema/due_date_rule",
+  "title": "DueDateRule",
+  "description": "Schema for encoding computable due date rules for recurring compliance obligations",
+  "type": "object",
+  "required": ["rule_id", "rule_code", "rule_type", "frequency", "is_active"],
+  "properties": {
+
+    "rule_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+
+    "rule_code": {
+      "type": "string",
+      "pattern": "^[A-Z0-9_]{3,100}$",
+      "examples": [
+        "DDR_GSTR3B_MONTHLY_GROUP_A",
+        "DDR_TDS_DEPOSIT_MONTHLY",
+        "DDR_ITR_NON_AUDIT",
+        "DDR_ADVANCE_TAX_Q1",
+        "DDR_MCA_AOC4_POST_AGM"
+      ]
+    },
+
+    "rule_version": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
+
+    "rule_type": {
+      "type": "string",
+      "enum": [
+        "FIXED_ANNUAL",
+        "FIXED_IN_AY",
+        "OFFSET_FROM_PERIOD_END",
+        "OFFSET_FROM_FY_END",
+        "OFFSET_FROM_AGM",
+        "OFFSET_FROM_EVENT",
+        "ADVANCE_TAX_INSTALLMENT",
+        "REGISTRATION_RELATIVE",
+        "CONTINUOUS",
+        "CUSTOM_EXPRESSION"
+      ]
+    },
+
+    "frequency": {
+      "type": "string",
+      "enum": [
+        "ONE_TIME",
+        "MONTHLY",
+        "QUARTERLY",
+        "HALF_YEARLY",
+        "ANNUAL",
+        "EVENT_BASED",
+        "CONTINUOUS"
+      ]
+    },
+
+    "fixed_day": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 31,
+      "description": "Day of month for FIXED_ANNUAL rule type"
+    },
+
+    "fixed_month": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 12,
+      "description": "Month for FIXED_ANNUAL rule type. NOTE: For post-FY-end filings (e.g., May 30 for LLP Form 11), this refers to the calendar year AFTER the FY ends."
+    },
+
+    "fixed_in_year_context": {
+      "type": ["string", "null"],
+      "enum": ["CURRENT_FY_YEAR", "AFTER_FY_END_YEAR", "ASSESSMENT_YEAR"],
+      "description": "For FIXED_ANNUAL: which calendar year does fixed_month/fixed_day apply to?",
+      "examples": [
+        "CURRENT_FY_YEAR: June 15 advance tax — in the current FY year",
+        "AFTER_FY_END_YEAR: May 30 LLP Form 11 — in the year after FY ends",
+        "ASSESSMENT_YEAR: July 31 ITR — in the AY year"
+      ]
+    },
+
+    "ay_fixed_day": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 31,
+      "description": "Day of month for FIXED_IN_AY rule type"
+    },
+
+    "ay_fixed_month": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 12,
+      "description": "Month in Assessment Year calendar for FIXED_IN_AY rule type"
+    },
+
+    "period_type": {
+      "type": ["string", "null"],
+      "enum": [
+        "CALENDAR_MONTH",
+        "FY_QUARTER",
+        "CALENDAR_QUARTER",
+        "HALF_YEAR_APR_SEP",
+        "HALF_YEAR_OCT_MAR",
+        "FINANCIAL_YEAR",
+        "CALENDAR_YEAR"
+      ],
+      "description": "For OFFSET_FROM_PERIOD_END: what kind of period does the offset apply to?"
+    },
+
+    "offset_days": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 365,
+      "description": "Number of days after period end for OFFSET_FROM_PERIOD_END"
+    },
+
+    "period_end_day_override": {
+      "type": ["integer", "null"],
+      "description": "If the period doesn't end on last day of month/quarter, specify the last day"
+    },
+
+    "applicable_quarters": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "integer",
+        "enum": [1, 2, 3, 4]
+      },
+      "description": "For quarterly rules: which FY quarters does this rule apply to? [1,2,3,4] for all."
+    },
+
+    "fy_end_offset_days": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 365,
+      "description": "For OFFSET_FROM_FY_END: days after March 31 of FY"
+    },
+
+    "agm_offset_days": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 120,
+      "description": "For OFFSET_FROM_AGM: days after the date of AGM"
+    },
+
+    "agm_deadline_as_fallback": {
+      "type": ["boolean", "null"],
+      "description": "For OFFSET_FROM_AGM: if actual AGM date not provided, use AGM deadline (Sep 30)?"
+    },
+
+    "event_offset_days": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 365,
+      "description": "For OFFSET_FROM_EVENT: days after the user-supplied event date"
+    },
+
+    "advance_tax_installment_number": {
+      "type": ["integer", "null"],
+      "enum": [1, 2, 3, 4],
+      "description": "For ADVANCE_TAX_INSTALLMENT rule type only"
+    },
+
+    "advance_tax_cumulative_pct": {
+      "type": ["number", "null"],
+      "description": "For ADVANCE_TAX_INSTALLMENT: cumulative % of estimated tax due by this date",
+      "examples": [15, 45, 75, 100]
+    },
+
+    "state_based_variation": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether due date varies by state (e.g., GSTR-3B 20th/22nd/24th staggering)"
+    },
+
+    "state_offset_rules": {
+      "type": ["array", "null"],
+      "description": "Array of state-group offset rules. Used when state_based_variation is true.",
+      "items": {
+        "type": "object",
+        "required": ["states", "offset_days"],
+        "properties": {
+          "group_label": {
+            "type": "string",
+            "description": "Human-readable label, e.g. 'Group A - Large States'"
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z]{2}$"
+            },
+            "description": "State codes in this group"
+          },
+          "offset_days": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "fixed_day": {
+            "type": ["integer", "null"],
+            "description": "If this state group has a fixed day rather than offset"
+          }
+        }
+      }
+    },
+
+    "working_day_rule": {
+      "type": "string",
+      "enum": ["NONE", "NEXT_WORKING_DAY", "PREV_WORKING_DAY"],
+      "default": "NEXT_WORKING_DAY",
+      "description": "How to adjust if the computed due date falls on a Sunday or public holiday"
+    },
+
+    "special_march_rule": {
+      "type": ["object", "null"],
+      "description": "Special rule for March period (e.g., TDS March deposit → April 30)",
+      "properties": {
+        "override_for_march": {
+          "type": "boolean"
+        },
+        "march_fixed_day": {
+          "type": "integer"
+        },
+        "march_fixed_month": {
+          "type": "integer",
+          "description": "Month of the override (e.g., 4 for April 30)"
+        }
+      }
+    },
+
+    "notification_override_possible": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether government notifications may override this due date"
+    },
+
+    "active_override_source_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "If a notification is currently extending this due date, the source_id of that notification"
+    },
+
+    "active_override_due_date": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "The actual extended due date per current override"
+    },
+
+    "active_override_expires": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "When the current override expires (the base rule resumes after this)"
+    },
+
+    "rule_description": {
+      "type": "string",
+      "description": "Human-readable description of how this due date is computed"
+    },
+
+    "rule_notes": {
+      "type": ["string", "null"],
+      "description": "Edge cases, caveats, or nuances"
+    },
+
+    "effective_from": {
+      "type": "string",
+      "format": "date"
+    },
+
+    "effective_to": {
+      "type": ["string", "null"],
+      "format": "date"
+    },
+
+    "superseded_by": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+
+    "is_active": {
+      "type": "boolean"
+    }
+  },
+
+  "additionalProperties": false,
+
+  "examples": [
+    {
+      "rule_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "rule_code": "DDR_GSTR3B_MONTHLY_REGULAR",
+      "rule_version": 1,
+      "rule_type": "OFFSET_FROM_PERIOD_END",
+      "frequency": "MONTHLY",
+      "period_type": "CALENDAR_MONTH",
+      "offset_days": 20,
+      "state_based_variation": true,
+      "state_offset_rules": [
+        {
+          "group_label": "Group A — Large/Southern States",
+          "states": ["MH", "KA", "TN", "GJ", "AP", "TS", "KL", "GA"],
+          "offset_days": 20
+        },
+        {
+          "group_label": "Group B — Northern/Eastern States",
+          "states": ["DL", "UP", "PB", "HR", "RJ", "WB", "OR", "MP", "CG", "BR", "JH"],
+          "offset_days": 22
+        },
+        {
+          "group_label": "Group C — NE States and Small UTs",
+          "states": ["AS", "MN", "MZ", "TR", "ML", "AR", "NL", "SK"],
+          "offset_days": 24
+        }
+      ],
+      "working_day_rule": "NEXT_WORKING_DAY",
+      "notification_override_possible": true,
+      "rule_description": "GSTR-3B is due on the 20th/22nd/24th (state-dependent) of the month following the return period. For return period April 2025: due May 20/22/24 2025 depending on state.",
+      "rule_notes": "State groupings are as per latest CBIC Notification under Central Tax. VERIFY current notification before populating state_offset_rules. Group C states may be updated.",
+      "effective_from": "2017-07-01",
+      "is_active": true
+    },
+    {
+      "rule_id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+      "rule_code": "DDR_ITR_FILING_NON_AUDIT",
+      "rule_version": 1,
+      "rule_type": "FIXED_IN_AY",
+      "frequency": "ANNUAL",
+      "ay_fixed_day": 31,
+      "ay_fixed_month": 7,
+      "state_based_variation": false,
+      "working_day_rule": "NEXT_WORKING_DAY",
+      "notification_override_possible": true,
+      "rule_description": "ITR for non-audit cases is due on July 31 of the Assessment Year. For FY2025-26: due July 31, 2026.",
+      "rule_notes": "CBDT has historically extended this due date for various FYs. Always check for current-year extension notification.",
+      "effective_from": "1961-04-01",
+      "is_active": true
+    },
+    {
+      "rule_id": "d4e5f6a7-b8c9-0123-defa-234567890123",
+      "rule_code": "DDR_ADVANCE_TAX_Q1",
+      "rule_version": 1,
+      "rule_type": "ADVANCE_TAX_INSTALLMENT",
+      "frequency": "QUARTERLY",
+      "advance_tax_installment_number": 1,
+      "advance_tax_cumulative_pct": 15,
+      "fixed_day": 15,
+      "fixed_month": 6,
+      "fixed_in_year_context": "CURRENT_FY_YEAR",
+      "state_based_variation": false,
+      "working_day_rule": "NEXT_WORKING_DAY",
+      "notification_override_possible": false,
+      "rule_description": "First advance tax installment: 15% of estimated annual tax liability due by June 15 of the current FY.",
+      "effective_from": "1961-04-01",
+      "is_active": true
+    }
+  ]
+}

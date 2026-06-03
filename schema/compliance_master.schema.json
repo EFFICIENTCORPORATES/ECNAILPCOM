@@ -1,0 +1,312 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ecnailpcom.in/schema/compliance_master",
+  "title": "ComplianceMaster",
+  "description": "Schema for a single compliance obligation record in the compliance master library",
+  "type": "object",
+  "required": [
+    "compliance_id",
+    "compliance_code",
+    "title",
+    "domain",
+    "obligation_type",
+    "frequency_type",
+    "description_plain",
+    "active_flag",
+    "effective_from"
+  ],
+  "properties": {
+
+    "compliance_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "UUID primary key"
+    },
+
+    "compliance_code": {
+      "type": "string",
+      "pattern": "^[A-Z0-9_]{3,50}$",
+      "description": "Stable code, e.g. GST_GSTR3B_MONTHLY_REGULAR or IT_ADVANCE_TAX_Q1",
+      "examples": [
+        "GST_GSTR3B_MONTHLY_REGULAR",
+        "IT_TDS_DEPOSIT_MONTHLY",
+        "MCA_AOC4_ANNUAL",
+        "EPF_ECR_MONTHLY",
+        "LLP_FORM11_ANNUAL",
+        "IT_ADVANCE_TAX_Q1"
+      ]
+    },
+
+    "title": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Full display title of the compliance",
+      "examples": [
+        "GSTR-3B Monthly Return Filing",
+        "TDS Deposit — Monthly (Non-Government Deductor)",
+        "AOC-4: Filing of Financial Statements with MCA"
+      ]
+    },
+
+    "short_title": {
+      "type": "string",
+      "maxLength": 100,
+      "description": "Short form for calendar/dashboard display"
+    },
+
+    "domain": {
+      "type": "string",
+      "enum": [
+        "GST",
+        "INCOME_TAX",
+        "TDS",
+        "TCS",
+        "MCA_COMPANY",
+        "MCA_LLP",
+        "SECRETARIAL",
+        "EPF",
+        "ESI",
+        "PROFESSIONAL_TAX",
+        "SHOPS_ESTABLISHMENTS",
+        "FACTORIES",
+        "LABOUR_BONUS",
+        "LABOUR_GRATUITY",
+        "LABOUR_MINIMUM_WAGES",
+        "LABOUR_CONTRACT",
+        "FSSAI",
+        "MSME",
+        "CUSTOMS_IEC",
+        "ENVIRONMENT",
+        "BOOKS_RECORDS",
+        "AUDIT_STATUTORY",
+        "AUDIT_TAX",
+        "ADVANCE_TAX",
+        "OTHER"
+      ]
+    },
+
+    "category": {
+      "type": "string",
+      "enum": [
+        "Return Filing",
+        "Tax Payment",
+        "Registration",
+        "Registration Renewal",
+        "Governance",
+        "Record Keeping",
+        "Event-Based Filing",
+        "Audit",
+        "Disclosure",
+        "Certificate Issuance",
+        "Indicator"
+      ]
+    },
+
+    "subcategory": {
+      "type": "string",
+      "description": "More specific classification within category"
+    },
+
+    "obligation_type": {
+      "type": "string",
+      "enum": [
+        "REGISTRATION",
+        "RETURN_FILING",
+        "TAX_PAYMENT",
+        "RECORD_KEEPING",
+        "GOVERNANCE",
+        "EVENT_BASED",
+        "AUDIT",
+        "DISCLOSURE",
+        "RENEWAL",
+        "CERTIFICATE",
+        "INDICATOR"
+      ]
+    },
+
+    "frequency_type": {
+      "type": "string",
+      "enum": [
+        "ONE_TIME",
+        "MONTHLY",
+        "QUARTERLY",
+        "HALF_YEARLY",
+        "ANNUAL",
+        "EVENT_BASED",
+        "CONTINUOUS",
+        "AS_APPLICABLE"
+      ]
+    },
+
+    "entity_types_applicable": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "PROPRIETORSHIP",
+          "PARTNERSHIP",
+          "LLP",
+          "PRIVATE_LIMITED",
+          "PUBLIC_LIMITED",
+          "OPC",
+          "SECTION8_COMPANY",
+          "ALL"
+        ]
+      },
+      "description": "Which entity types this compliance applies to. ['ALL'] means all entity types."
+    },
+
+    "activity_types_applicable": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["SERVICE", "TRADING", "MANUFACTURING", "MIXED", "ALL"]
+      }
+    },
+
+    "geography_scope": {
+      "type": "string",
+      "enum": ["CENTRAL", "ALL_STATES", "SPECIFIC_STATE", "SPECIFIC_STATES"]
+    },
+
+    "state_codes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z]{2}$"
+      },
+      "description": "ISO 3166-2:IN state codes. Required if geography_scope is SPECIFIC_STATE(S)."
+    },
+
+    "description_plain": {
+      "type": "string",
+      "description": "Plain English explanation of what this compliance obligation is"
+    },
+
+    "legal_basis_summary": {
+      "type": "string",
+      "description": "One paragraph summary of the legal basis for this obligation"
+    },
+
+    "applicability_rule_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "FK to applicability_rule table"
+    },
+
+    "due_date_rule_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "FK to due_date_rule table. Null for continuous or event-dependent obligations."
+    },
+
+    "penalty_record_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "FK to penalty_record table"
+    },
+
+    "base_severity_score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Inherent severity score 0-100 computed from penalty record"
+    },
+
+    "severity_band": {
+      "type": "string",
+      "enum": ["LOW", "MODERATE", "HIGH", "SEVERE", "CRITICAL"]
+    },
+
+    "depends_on_compliance": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" },
+      "description": "Compliance IDs that must be completed before this one"
+    },
+
+    "cascades_to_compliance": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" },
+      "description": "Compliance IDs that are affected if this is delayed"
+    },
+
+    "requires_human_review": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, professional review is needed to confirm applicability or execution"
+    },
+
+    "requires_threshold_check": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, applicability depends on a threshold the user must verify"
+    },
+
+    "state_specific_notes": {
+      "type": "string",
+      "description": "Notes on state-specific variations not captured in the main rule"
+    },
+
+    "active_flag": {
+      "type": "boolean",
+      "description": "Whether this compliance record is currently active"
+    },
+
+    "effective_from": {
+      "type": "string",
+      "format": "date",
+      "description": "Date from which this compliance obligation is active"
+    },
+
+    "effective_to": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "Date until which this compliance is active. Null if still active."
+    },
+
+    "superseded_by": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "If this record is superseded, the ID of the new record"
+    },
+
+    "last_reviewed_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+
+    "review_due_by": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "Max 90 days from last_reviewed_at. Flags stale records."
+    }
+  },
+
+  "additionalProperties": false,
+
+  "examples": [
+    {
+      "compliance_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "compliance_code": "GST_GSTR3B_MONTHLY_REGULAR",
+      "title": "GSTR-3B Monthly Return Filing — Regular Scheme",
+      "short_title": "GSTR-3B Monthly",
+      "domain": "GST",
+      "category": "Return Filing",
+      "subcategory": "Monthly Returns",
+      "obligation_type": "RETURN_FILING",
+      "frequency_type": "MONTHLY",
+      "entity_types_applicable": ["ALL"],
+      "activity_types_applicable": ["ALL"],
+      "geography_scope": "CENTRAL",
+      "state_codes": [],
+      "description_plain": "Monthly summary return of outward and inward supplies and payment of GST liability. Filed by all regular scheme taxpayers with monthly filing frequency.",
+      "legal_basis_summary": "Mandated under Section 39 of the CGST Act, 2017 read with Rule 61 of the CGST Rules, 2017. Due date is staggered by state as per CBIC notifications.",
+      "base_severity_score": 50,
+      "severity_band": "HIGH",
+      "requires_human_review": false,
+      "requires_threshold_check": false,
+      "active_flag": true,
+      "effective_from": "2017-07-01"
+    }
+  ]
+}

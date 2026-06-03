@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ecnailpcom.in/schema/api_error",
+  "title": "APIErrorResponse",
+  "description": "Standard error response envelope for all API errors",
+  "type": "object",
+  "required": ["error"],
+  "properties": {
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "request_id"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "VALIDATION_ERROR",
+            "INVALID_PARAMETER",
+            "UNAUTHORIZED",
+            "INVALID_TOKEN",
+            "INVALID_API_KEY",
+            "FORBIDDEN",
+            "WORKSPACE_SUSPENDED",
+            "NOT_FOUND",
+            "CONFLICT",
+            "EVALUATION_FAILED",
+            "INSUFFICIENT_PROFILE_DATA",
+            "QUOTA_EXCEEDED",
+            "PLAN_LIMIT_REACHED",
+            "RATE_LIMITED",
+            "INTERNAL_ERROR",
+            "SERVICE_UNAVAILABLE"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable error message. Should be clear enough to act on without consulting docs."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "UUID of the request. Include in support tickets."
+        },
+        "details": {
+          "type": "array",
+          "description": "For VALIDATION_ERROR: field-level error details",
+          "items": {
+            "type": "object",
+            "required": ["field", "issue"],
+            "properties": {
+              "field": {
+                "type": "string",
+                "description": "JSON path to the invalid field",
+                "examples": ["questionnaire.entity_type", "answers.gst_scheme"]
+              },
+              "issue": {
+                "type": "string",
+                "description": "What is wrong with this field",
+                "examples": ["must be one of: PROPRIETORSHIP, LLP, PRIVATE_LIMITED"]
+              },
+              "received_value": {
+                "description": "The value that was received (for debugging)"
+              }
+            }
+          }
+        },
+        "quota_used": {
+          "type": "integer",
+          "description": "For QUOTA_EXCEEDED: how many units have been used today"
+        },
+        "quota_limit": {
+          "type": "integer",
+          "description": "For QUOTA_EXCEEDED: the daily limit"
+        },
+        "quota_reset_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "For QUOTA_EXCEEDED: when the quota resets (UTC midnight)"
+        },
+        "upgrade_url": {
+          "type": "string",
+          "description": "For QUOTA_EXCEEDED and PLAN_LIMIT_REACHED: URL to upgrade page"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "For PLAN_LIMIT_REACHED: the plan limit that was hit"
+        },
+        "current": {
+          "type": "integer",
+          "description": "For PLAN_LIMIT_REACHED: current count"
+        },
+        "retry_after": {
+          "type": "integer",
+          "description": "For RATE_LIMITED: seconds to wait before retrying"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "error": {
+        "code": "VALIDATION_ERROR",
+        "message": "The request contains invalid fields.",
+        "request_id": "req_abc123xyz",
+        "details": [
+          {
+            "field": "entity_type",
+            "issue": "must be one of: PROPRIETORSHIP, PARTNERSHIP, LLP, PRIVATE_LIMITED, PUBLIC_LIMITED, OPC",
+            "received_value": "SOLE_PROP"
+          }
+        ]
+      }
+    },
+    {
+      "error": {
+        "code": "QUOTA_EXCEEDED",
+        "message": "Your daily evaluation limit (100) has been reached. Existing results are still accessible. Your quota resets at midnight UTC (5:30 AM IST).",
+        "request_id": "req_def456uvw",
+        "quota_used": 100,
+        "quota_limit": 100,
+        "quota_reset_at": "2026-06-04T00:00:00Z",
+        "upgrade_url": "https://app.ecnailpcom.in/pricing"
+      }
+    },
+    {
+      "error": {
+        "code": "INVALID_API_KEY",
+        "message": "The provided API key is invalid or has been revoked.",
+        "request_id": "req_ghi789rst"
+      }
+    }
+  ]
+}

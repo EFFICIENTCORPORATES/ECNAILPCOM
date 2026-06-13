@@ -1,0 +1,13 @@
+## Initial Website with Captcha
+
+https://verdictfinder.sci.gov.in/elk_frontend/
+
+## List of Cases to Scrape
+https://verdictfinder.sci.gov.in/elk_frontend/free_text_search.php?search=THE&text-filter=b&new_search=true
+
+
+THIS DISPALYS 30 LAKHS RESULTS
+
+wE NEED TO SCRAPE ALL TESE 30 LAKS CASE RESULTS AND STORE IN PDF / MD FILE 
+
+

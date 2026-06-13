@@ -23,7 +23,7 @@ from playwright.async_api import async_playwright, BrowserContext, Page
 from config import (
     HOME_URL, SEARCH_URL, BASE_URL,
     OUTPUT_DIR, LOG_DIR,
-    VIEWPORTS, USER_AGENTS, TOR_PROXY,
+    VIEWPORTS, USER_AGENTS, TOR_PROXY, PROFILE_DIR,
 )
 from human import (
     random_delay,
@@ -79,29 +79,38 @@ _STEALTH_SCRIPT = """
 # ── Browser factory ───────────────────────────────────────────────────────────
 
 async def create_browser(playwright, use_tor: bool = False):
-    viewport   = random.choice(VIEWPORTS)
-    user_agent = random.choice(USER_AGENTS)
+    """
+    Launch Chromium with a PERSISTENT profile stored in scraper/browser_profile/.
 
+    On first run the folder is created fresh.
+    Every subsequent run reuses it — cookies, cache, localStorage, and
+    browsing history accumulate, making the browser look like a returning
+    human visitor rather than a bot opening a brand-new browser.
+    """
+    profile_path = Path(__file__).parent / PROFILE_DIR
+    profile_path.mkdir(parents=True, exist_ok=True)
+
+    # Pick a stable fingerprint. Because the profile persists, we keep the
+    # same viewport/UA across runs (a real person doesn't change screen size
+    # every session). We store the choice in a small JSON file.
+    fp_file = profile_path / "fingerprint.json"
+    if fp_file.exists():
+        fp = json.loads(fp_file.read_text())
+        viewport   = fp["viewport"]
+        user_agent = fp["user_agent"]
+        log.info("Loaded existing browser fingerprint from profile.")
+    else:
+        viewport   = random.choice(VIEWPORTS)
+        user_agent = random.choice(USER_AGENTS)
+        fp_file.write_text(json.dumps({"viewport": viewport, "user_agent": user_agent}))
+        log.info("Created new browser fingerprint and saved to profile.")
+
+    log.info(f"Profile  : {profile_path}")
     log.info(f"Viewport : {viewport['width']}x{viewport['height']}")
     log.info(f"UserAgent: {user_agent[:72]}...")
 
     launch_kwargs = dict(
         headless=False,          # visible window — required for manual CAPTCHA
-        args=[
-            "--disable-blink-features=AutomationControlled",
-            "--disable-infobars",
-            "--disable-dev-shm-usage",
-            "--no-sandbox",
-            "--disable-gpu",
-        ],
-    )
-    if use_tor:
-        launch_kwargs["proxy"] = {"server": TOR_PROXY}
-        log.info(f"Routing traffic through Tor ({TOR_PROXY})")
-
-    browser = await playwright.chromium.launch(**launch_kwargs)
-
-    context = await browser.new_context(
         viewport=viewport,
         user_agent=user_agent,
         accept_downloads=True,
@@ -115,12 +124,29 @@ async def create_browser(playwright, use_tor: bool = False):
             ),
             "DNT": "1",
         },
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--disable-infobars",
+            "--disable-dev-shm-usage",
+            "--no-sandbox",
+            "--disable-gpu",
+        ],
+    )
+
+    if use_tor:
+        launch_kwargs["proxy"] = {"server": TOR_PROXY}
+        log.info(f"Routing traffic through Tor ({TOR_PROXY})")
+
+    # launch_persistent_context returns a BrowserContext directly (not a Browser)
+    context = await playwright.chromium.launch_persistent_context(
+        str(profile_path),
+        **launch_kwargs,
     )
 
     # Inject stealth overrides before any page script runs
     await context.add_init_script(_STEALTH_SCRIPT)
 
-    return browser, context
+    return context
 
 
 # ── CAPTCHA pause ─────────────────────────────────────────────────────────────
@@ -296,7 +322,7 @@ async def run(count: int = 1, use_tor: bool = False) -> None:
     Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
 
     async with async_playwright() as p:
-        browser, context = await create_browser(p, use_tor=use_tor)
+        context = await create_browser(p, use_tor=use_tor)
         page = await context.new_page()
 
         try:
@@ -375,8 +401,8 @@ async def run(count: int = 1, use_tor: bool = False) -> None:
 
         finally:
             await random_delay(2.0, 4.0)
-            await browser.close()
-            log.info("Browser closed.")
+            await context.close()   # closes the persistent context (and its browser)
+            log.info("Browser closed. Profile saved to browser_profile/")
 
 
 # ── CLI arg parsing ───────────────────────────────────────────────────────────

@@ -168,59 +168,78 @@ async def save_debug_html(page: Page, label: str = "debug") -> Path:
 
 async def find_pdf_buttons(page: Page) -> list:
     """
-    Locate the VIEW PDF buttons/links in the search results.
-    Tries a priority list of CSS selectors, then falls back to scanning all
-    <a> and <button> tags for anything PDF-related.
+    Locate the case buttons in the search results table.
+
+    From DevTools inspection: each result row contains a
+      <button class="show-modal-btn" data-diaryno="..." data-orderdate="...">
+    That is the element to click — it opens the Enscript Output modal with the PDF.
+
+    Selector confirmed from browser DevTools:
+      table.table-bordered.nowrap.dataTable tbody tr td button.show-modal-btn
     """
-    selectors = [
-        "a[href*='.pdf']",
-        "a[href*='PDF']",
-        "a[href*='viewpdf']",
-        "a[href*='view_pdf']",
-        "a[href*='getpdf']",
-        "a:has-text('VIEW PDF')",
-        "a:has-text('View PDF')",
-        "a:has-text('PDF')",
-        "button:has-text('PDF')",
-        "button:has-text('View')",
-        "input[type='button'][value*='PDF']",
-        "a[target='_blank']",
-    ]
+    # Primary — exact selector confirmed from DevTools
+    primary = "button.show-modal-btn"
+    try:
+        elements = await page.query_selector_all(primary)
+        if elements:
+            log.info(f"Found {len(elements)} case button(s) via primary selector: {primary!r}")
+            return elements
+    except Exception as exc:
+        log.warning(f"Primary selector failed: {exc}")
 
-    for sel in selectors:
-        try:
-            elements = await page.query_selector_all(sel)
-            if elements:
-                log.info(f"Found {len(elements)} PDF button(s) via: {sel!r}")
-                return elements
-        except Exception:
-            continue
+    # Fallback 1 — any button with data-diaryno attribute
+    fallback1 = "button[data-diaryno]"
+    try:
+        elements = await page.query_selector_all(fallback1)
+        if elements:
+            log.info(f"Found {len(elements)} button(s) via fallback: {fallback1!r}")
+            return elements
+    except Exception:
+        pass
 
-    log.warning("Standard selectors empty — scanning all tags for PDF hints...")
+    # Fallback 2 — scan all buttons inside the results table
+    log.warning("Confirmed selectors found nothing — scanning table buttons...")
     candidates = []
-    for tag in ["a[href]", "button", "input[type='button']"]:
-        for el in await page.query_selector_all(tag):
-            href = (await el.get_attribute("href") or "").lower()
-            text = (await el.inner_text()).lower()
-            if any(kw in href or kw in text for kw in ["pdf", "view", "judgment", "order"]):
-                candidates.append(el)
+    for btn in await page.query_selector_all("table button, table a"):
+        text = (await btn.inner_text()).strip()
+        if text:
+            candidates.append(btn)
 
-    log.info(f"Fallback scan: {len(candidates)} candidate(s)")
+    log.info(f"Fallback table scan: {len(candidates)} candidate(s)")
     return candidates
 
 
 async def extract_table_rows(page: Page) -> list[dict]:
-    """Pull text from the results table for metadata."""
+    """
+    Pull structured metadata from each result row.
+
+    From DevTools: each row has a <button class="show-modal-btn">
+    with data-diaryno and data-orderdate attributes.
+    We extract those plus the full case name text.
+    """
     rows = []
     try:
-        await page.wait_for_selector("table", timeout=12_000)
+        await page.wait_for_selector("table.dataTable", timeout=12_000)
         for i, tr in enumerate(await page.query_selector_all("table tbody tr")):
-            cells    = await tr.query_selector_all("td")
+
             row_data = {"row_index": i}
-            for j, td in enumerate(cells):
+
+            # Pull data attributes from the show-modal-btn inside this row
+            btn = await tr.query_selector("button.show-modal-btn")
+            if btn:
+                row_data["case_name"]   = (await btn.inner_text()).strip()
+                row_data["diary_no"]    = await btn.get_attribute("data-diaryno") or ""
+                row_data["order_date"]  = await btn.get_attribute("data-orderdate") or ""
+
+            # Also capture plain cell text as fallback columns
+            for j, td in enumerate(await tr.query_selector_all("td")):
                 row_data[f"col_{j}"] = (await td.inner_text()).strip()
+
             rows.append(row_data)
+
         log.info(f"Table: {len(rows)} row(s) extracted")
+        if rows:
+            log.info(f"  First case: {rows[0].get('case_name', '?')} | Diary: {rows[0].get('diary_no', '?')}")
     except Exception as exc:
         log.warning(f"Table extraction skipped: {exc}")
     return rows

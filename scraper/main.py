@@ -2,17 +2,22 @@
 VerdictFinder Scraper — Supreme Court of India
 ================================================
 Usage:
-    python main.py            # scrape 1 test case, own IP
-    python main.py --tor      # scrape 1 test case, route through Tor (Tor must be running)
-    python main.py --count 5  # scrape first 5 cases
+    python main.py            # scrape 1 case
+    python main.py --count 3  # scrape first 3 cases
+    python main.py --tor      # route through Tor (Tor Browser must be running)
 
-First run: solve the CAPTCHA manually when the browser pauses.
+Flow:
+    1. Opens browser with persistent profile (cookies/history accumulate)
+    2. Pauses at homepage for you to solve the CAPTCHA manually
+    3. Navigates to search results
+    4. For each case: hovers → clicks VIEW PDF → intercepts the PDF at network
+       level (works whether the site shows a modal, new tab, or download)
+    5. Saves PDF + JSON metadata to trainingdata/scraped/
 """
 
 import asyncio
 import json
 import logging
-import os
 import re
 import sys
 from datetime import datetime
@@ -27,7 +32,7 @@ from config import (
 )
 from human import (
     random_delay,
-    human_hover_and_click,
+    human_mouse_move,
     simulate_reading,
     human_scroll,
 )
@@ -58,16 +63,11 @@ log = _setup_logging()
 # ── Stealth JS injected into every page ──────────────────────────────────────
 
 _STEALTH_SCRIPT = """
-    // Hide automation signals
     Object.defineProperty(navigator, 'webdriver',  { get: () => undefined });
     Object.defineProperty(navigator, 'plugins',    { get: () => [1, 2, 3, 4, 5] });
     Object.defineProperty(navigator, 'languages',  { get: () => ['en-IN', 'en-US', 'en'] });
     Object.defineProperty(navigator, 'platform',   { get: () => 'Win32' });
-
-    // Fake Chrome runtime so bot-detector scripts see a "real" Chrome
     window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){} };
-
-    // Permissions API — return real notification state rather than throwing
     const _origPermQuery = window.navigator.permissions.query.bind(navigator.permissions);
     window.navigator.permissions.query = (params) =>
         params.name === 'notifications'
@@ -76,41 +76,36 @@ _STEALTH_SCRIPT = """
 """
 
 
-# ── Browser factory ───────────────────────────────────────────────────────────
+# ── Browser factory (persistent profile) ─────────────────────────────────────
 
 async def create_browser(playwright, use_tor: bool = False):
     """
-    Launch Chromium with a PERSISTENT profile stored in scraper/browser_profile/.
-
-    On first run the folder is created fresh.
-    Every subsequent run reuses it — cookies, cache, localStorage, and
-    browsing history accumulate, making the browser look like a returning
-    human visitor rather than a bot opening a brand-new browser.
+    Launch Chromium with a persistent profile in scraper/browser_profile/.
+    Cookies, cache, and history accumulate across runs — looks like a
+    returning human rather than a fresh bot each time.
+    Fingerprint (viewport + UA) is picked once on first run and locked.
     """
     profile_path = Path(__file__).parent / PROFILE_DIR
     profile_path.mkdir(parents=True, exist_ok=True)
 
-    # Pick a stable fingerprint. Because the profile persists, we keep the
-    # same viewport/UA across runs (a real person doesn't change screen size
-    # every session). We store the choice in a small JSON file.
     fp_file = profile_path / "fingerprint.json"
     if fp_file.exists():
-        fp = json.loads(fp_file.read_text())
+        fp         = json.loads(fp_file.read_text())
         viewport   = fp["viewport"]
         user_agent = fp["user_agent"]
-        log.info("Loaded existing browser fingerprint from profile.")
+        log.info("Loaded existing browser fingerprint.")
     else:
         viewport   = random.choice(VIEWPORTS)
         user_agent = random.choice(USER_AGENTS)
         fp_file.write_text(json.dumps({"viewport": viewport, "user_agent": user_agent}))
-        log.info("Created new browser fingerprint and saved to profile.")
+        log.info("New fingerprint created and saved.")
 
     log.info(f"Profile  : {profile_path}")
     log.info(f"Viewport : {viewport['width']}x{viewport['height']}")
     log.info(f"UserAgent: {user_agent[:72]}...")
 
     launch_kwargs = dict(
-        headless=False,          # visible window — required for manual CAPTCHA
+        headless=False,
         viewport=viewport,
         user_agent=user_agent,
         accept_downloads=True,
@@ -135,17 +130,13 @@ async def create_browser(playwright, use_tor: bool = False):
 
     if use_tor:
         launch_kwargs["proxy"] = {"server": TOR_PROXY}
-        log.info(f"Routing traffic through Tor ({TOR_PROXY})")
+        log.info(f"Routing through Tor ({TOR_PROXY})")
 
-    # launch_persistent_context returns a BrowserContext directly (not a Browser)
     context = await playwright.chromium.launch_persistent_context(
         str(profile_path),
         **launch_kwargs,
     )
-
-    # Inject stealth overrides before any page script runs
     await context.add_init_script(_STEALTH_SCRIPT)
-
     return context
 
 
@@ -153,14 +144,12 @@ async def create_browser(playwright, use_tor: bool = False):
 
 async def wait_for_captcha(page: Page) -> None:
     log.info("━" * 62)
-    log.info("  CAPTCHA DETECTED")
-    log.info("  Solve it in the browser window, then press ENTER here.")
+    log.info("  CAPTCHA — solve it in the browser, then press ENTER here.")
     log.info("━" * 62)
-    # run_in_executor lets us await a blocking input() call
     await asyncio.get_event_loop().run_in_executor(
-        None, input, "\n  >>> Press ENTER after solving the CAPTCHA: "
+        None, input, "\n  >>> Press ENTER after solving CAPTCHA: "
     )
-    log.info("Resuming after CAPTCHA...")
+    log.info("Resuming...")
     await random_delay(1.5, 3.0)
 
 
@@ -171,7 +160,7 @@ async def save_debug_html(page: Page, label: str = "debug") -> Path:
     stamp = datetime.now().strftime("%H%M%S")
     path  = Path(LOG_DIR) / f"{label}_{stamp}.html"
     path.write_text(html, encoding="utf-8")
-    log.info(f"Debug HTML → {path}")
+    log.info(f"Debug HTML saved → {path}")
     return path
 
 
@@ -179,8 +168,9 @@ async def save_debug_html(page: Page, label: str = "debug") -> Path:
 
 async def find_pdf_buttons(page: Page) -> list:
     """
-    Try a priority list of selectors to locate VIEW-PDF links/buttons.
-    Returns the matched element list (possibly empty).
+    Locate the VIEW PDF buttons/links in the search results.
+    Tries a priority list of CSS selectors, then falls back to scanning all
+    <a> and <button> tags for anything PDF-related.
     """
     selectors = [
         "a[href*='.pdf']",
@@ -192,6 +182,7 @@ async def find_pdf_buttons(page: Page) -> list:
         "a:has-text('View PDF')",
         "a:has-text('PDF')",
         "button:has-text('PDF')",
+        "button:has-text('View')",
         "input[type='button'][value*='PDF']",
         "a[target='_blank']",
     ]
@@ -200,32 +191,30 @@ async def find_pdf_buttons(page: Page) -> list:
         try:
             elements = await page.query_selector_all(sel)
             if elements:
-                log.info(f"Found {len(elements)} PDF link(s) via: {sel!r}")
+                log.info(f"Found {len(elements)} PDF button(s) via: {sel!r}")
                 return elements
         except Exception:
             continue
 
-    # Fallback: inspect all <a> tags for PDF-looking href / text
-    log.warning("Standard selectors found nothing — scanning all <a> tags...")
-    all_links = await page.query_selector_all("a[href]")
-    found = []
-    for link in all_links:
-        href = (await link.get_attribute("href") or "").lower()
-        text = (await link.inner_text()).lower()
-        if "pdf" in href or "pdf" in text or "view" in text:
-            found.append(link)
+    log.warning("Standard selectors empty — scanning all tags for PDF hints...")
+    candidates = []
+    for tag in ["a[href]", "button", "input[type='button']"]:
+        for el in await page.query_selector_all(tag):
+            href = (await el.get_attribute("href") or "").lower()
+            text = (await el.inner_text()).lower()
+            if any(kw in href or kw in text for kw in ["pdf", "view", "judgment", "order"]):
+                candidates.append(el)
 
-    log.info(f"Fallback scan: {len(found)} candidate link(s)")
-    return found
+    log.info(f"Fallback scan: {len(candidates)} candidate(s)")
+    return candidates
 
 
 async def extract_table_rows(page: Page) -> list[dict]:
-    """Pull text from every <td> in the results table."""
+    """Pull text from the results table for metadata."""
     rows = []
     try:
-        await page.wait_for_selector("table", timeout=12000)
-        tr_list = await page.query_selector_all("table tbody tr")
-        for i, tr in enumerate(tr_list):
+        await page.wait_for_selector("table", timeout=12_000)
+        for i, tr in enumerate(await page.query_selector_all("table tbody tr")):
             cells    = await tr.query_selector_all("td")
             row_data = {"row_index": i}
             for j, td in enumerate(cells):
@@ -237,7 +226,7 @@ async def extract_table_rows(page: Page) -> list[dict]:
     return rows
 
 
-# ── PDF capture ───────────────────────────────────────────────────────────────
+# ── PDF capture — network interception (primary method) ───────────────────────
 
 async def capture_pdf(
     page: Page,
@@ -245,77 +234,191 @@ async def capture_pdf(
     element,
 ) -> tuple[bytes | None, str]:
     """
-    Click `element` and capture the PDF via whichever mechanism the site uses:
-      1. New tab  — most common for government portals
-      2. Download — if the server sends Content-Disposition: attachment
-    Returns (pdf_bytes, suggested_filename).
-    """
+    Hover over element, then click it and capture the PDF.
 
-    # ── Attempt 1: new tab ────────────────────────────────────────────────────
+    WHY NETWORK INTERCEPTION:
+    This site opens a modal/dialog with an embedded PDF viewer when you
+    click VIEW PDF. Our earlier approach (waiting for a new tab or download)
+    misses this pattern entirely.
+
+    Network interception works regardless of HOW the PDF is displayed —
+    modal, new tab, inline viewer, or download — because we catch the actual
+    HTTP response carrying the PDF bytes before the browser renders it.
+
+    Fallback chain:
+      1. Network interception (catches modal/iframe/any pattern)
+      2. Modal DOM scan (extract iframe src from dialog element)
+      3. New browser tab
+      4. Browser download event
+    """
+    pdf_result: dict = {"bytes": None, "filename": "case.pdf"}
+    pdf_ready  = asyncio.Event()
+
+    # ── Hover to look human ───────────────────────────────────────────────────
+    box = await element.bounding_box()
+    if box:
+        cx = box["x"] + box["width"]  * random.uniform(0.3, 0.7)
+        cy = box["y"] + box["height"] * random.uniform(0.3, 0.7)
+        await human_mouse_move(page, cx, cy)
+    await element.hover()
+    await random_delay(0.3, 0.8)
+
+    # ── Attempt 1: intercept PDF at network level ─────────────────────────────
+    # Registers a response listener on the page BEFORE clicking, so we catch
+    # the PDF response the moment the browser fetches it.
+
+    async def _on_response(response):
+        if pdf_ready.is_set():
+            return
+        content_type = response.headers.get("content-type", "")
+        url          = response.url
+        is_pdf = (
+            "application/pdf" in content_type
+            or url.lower().split("?")[0].endswith(".pdf")
+        )
+        if not is_pdf:
+            return
+        try:
+            body = await response.body()
+            if body and len(body) > 1_024:   # >1 KB — real PDF, not an error page
+                fname = url.rstrip("/").split("?")[0].split("/")[-1]
+                if not fname.lower().endswith(".pdf"):
+                    fname = f"judgment_{datetime.now().strftime('%H%M%S')}.pdf"
+                pdf_result["bytes"]    = body
+                pdf_result["filename"] = fname
+                pdf_ready.set()
+                log.info(f"PDF intercepted from network: {url}")
+                log.info(f"  Content-Type : {content_type}")
+                log.info(f"  Size         : {len(body):,} bytes")
+        except Exception as exc:
+            log.debug(f"Response body read error: {exc}")
+
+    page.on("response", _on_response)
+
+    try:
+        await element.click()
+        await asyncio.wait_for(pdf_ready.wait(), timeout=15.0)
+        if pdf_result["bytes"]:
+            return pdf_result["bytes"], pdf_result["filename"]
+    except asyncio.TimeoutError:
+        log.info("Network interception timed out — trying modal scan...")
+    finally:
+        page.remove_listener("response", _on_response)
+
+    # ── Attempt 2: modal/dialog DOM scan ─────────────────────────────────────
+    # If the PDF is inside a <dialog> or modal <div>, look for its iframe src.
+    try:
+        await asyncio.sleep(2.5)   # let the modal fully render
+
+        modal_selectors = [
+            "dialog[open]", ".modal.show .modal-body",
+            "#pdfModal", "#viewModal", "#docModal",
+            "[role='dialog']", ".modal-content",
+            ".popup", ".overlay", ".lightbox",
+        ]
+        embed_attrs = [
+            ("iframe",  "src"),
+            ("object",  "data"),
+            ("embed",   "src"),
+        ]
+
+        pdf_src = None
+
+        for modal_sel in modal_selectors:
+            modal = await page.query_selector(modal_sel)
+            if not modal:
+                continue
+            for tag, attr in embed_attrs:
+                el = await modal.query_selector(f"{tag}[{attr}]")
+                if el:
+                    src = (await el.get_attribute(attr) or "").strip()
+                    if src and src not in ("about:blank", "") and "pdf" in src.lower():
+                        pdf_src = src
+                        log.info(f"PDF src found in modal ({modal_sel}→{tag}): {src[:80]}")
+                        break
+            if pdf_src:
+                break
+
+        # Also scan page-level iframes that appeared after the click
+        if not pdf_src:
+            for iframe in await page.query_selector_all("iframe[src]"):
+                src = (await iframe.get_attribute("src") or "").strip()
+                if src and "pdf" in src.lower() and src != "about:blank":
+                    pdf_src = src
+                    log.info(f"PDF iframe on page: {src[:80]}")
+                    break
+
+        if pdf_src:
+            if pdf_src.startswith("//"):
+                pdf_src = "https:" + pdf_src
+            elif pdf_src.startswith("/"):
+                pdf_src = BASE_URL.rstrip("/") + pdf_src
+
+            resp = await page.request.get(pdf_src)
+            if resp.ok:
+                body = await resp.body()
+                fname = pdf_src.split("?")[0].rstrip("/").split("/")[-1]
+                if not fname.lower().endswith(".pdf"):
+                    fname += ".pdf"
+                log.info(f"PDF fetched from modal src: {len(body):,} bytes")
+                return body, fname
+
+    except Exception as exc:
+        log.info(f"Modal scan failed: {exc} — trying new-tab...")
+
+    # ── Attempt 3: new browser tab ────────────────────────────────────────────
     try:
         async with context.expect_page(timeout=8_000) as new_page_info:
             await element.click()
-
         new_page = await new_page_info.value
-        await new_page.wait_for_load_state("networkidle", timeout=30_000)
-
-        pdf_url = new_page.url
-        log.info(f"PDF opened in new tab: {pdf_url}")
-
+        await new_page.wait_for_load_state("networkidle", timeout=20_000)
+        pdf_url  = new_page.url
+        log.info(f"PDF in new tab: {pdf_url}")
         response = await new_page.goto(pdf_url)
-        content  = await response.body() if response else None
-
-        filename = pdf_url.rstrip("/").split("/")[-1]
-        if not filename.lower().endswith(".pdf"):
-            filename += ".pdf"
-
+        body     = await response.body() if response else None
+        fname    = pdf_url.split("?")[0].rstrip("/").split("/")[-1]
+        if not fname.lower().endswith(".pdf"):
+            fname += ".pdf"
         await new_page.close()
-        return content, filename
+        return body, fname
+    except Exception as exc:
+        log.info(f"New-tab failed: {exc} — trying download event...")
 
-    except Exception as exc_tab:
-        log.info(f"New-tab approach: {exc_tab} — trying download handler...")
-
-    # ── Attempt 2: browser download ───────────────────────────────────────────
+    # ── Attempt 4: browser download event ────────────────────────────────────
     try:
         async with page.expect_download(timeout=12_000) as dl_info:
             await element.click()
-
-        download = await dl_info.value
-        tmp_path = await download.path()
-        filename = download.suggested_filename or "case.pdf"
-
-        with open(tmp_path, "rb") as f:
-            content = f.read()
-
-        log.info(f"PDF captured via download: {filename} ({len(content):,} bytes)")
-        return content, filename
-
-    except Exception as exc_dl:
-        log.error(f"Download approach also failed: {exc_dl}")
+        dl       = await dl_info.value
+        tmp      = await dl.path()
+        fname    = dl.suggested_filename or "case.pdf"
+        body     = Path(tmp).read_bytes()
+        log.info(f"PDF via download: {fname} ({len(body):,} bytes)")
+        return body, fname
+    except Exception as exc:
+        log.error(f"All 4 capture methods failed. Last error: {exc}")
         return None, "case.pdf"
 
 
 # ── Save to disk ──────────────────────────────────────────────────────────────
 
 def save_pdf(content: bytes, filename: str, index: int) -> Path:
-    safe   = re.sub(r"[^\w\-.]", "_", filename)
-    stamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
-    name   = f"{index:04d}_{stamp}_{safe}"
-    path   = Path(OUTPUT_DIR) / name
+    safe  = re.sub(r"[^\w\-.]", "_", filename)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name  = f"{index:04d}_{stamp}_{safe}"
+    path  = Path(OUTPUT_DIR) / name
     path.write_bytes(content)
     log.info(f"Saved: {path}  ({len(content):,} bytes)")
     return path
 
 
 def save_metadata(row_data: dict, pdf_path: Path) -> None:
+    meta = {**row_data, "pdf_file": str(pdf_path), "scraped_at": datetime.now().isoformat()}
     meta_path = Path(LOG_DIR) / (pdf_path.stem + ".json")
-    row_data["pdf_file"] = str(pdf_path)
-    row_data["scraped_at"] = datetime.now().isoformat()
-    meta_path.write_text(json.dumps(row_data, indent=2, ensure_ascii=False))
+    meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False))
     log.info(f"Metadata: {meta_path}")
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 async def run(count: int = 1, use_tor: bool = False) -> None:
     Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
@@ -323,77 +426,65 @@ async def run(count: int = 1, use_tor: bool = False) -> None:
 
     async with async_playwright() as p:
         context = await create_browser(p, use_tor=use_tor)
-        page = await context.new_page()
+        page    = await context.new_page()
 
         try:
-            # ── 1. Homepage (CAPTCHA gate) ────────────────────────────────
-            log.info(f"Opening homepage: {HOME_URL}")
+            # ── 1. Homepage → CAPTCHA ─────────────────────────────────────
+            log.info(f"Opening: {HOME_URL}")
             await page.goto(HOME_URL, wait_until="domcontentloaded", timeout=30_000)
             await random_delay(2.0, 4.0)
-
             await wait_for_captcha(page)
 
-            # ── 2. Search results page ────────────────────────────────────
+            # ── 2. Search results ─────────────────────────────────────────
             log.info(f"Loading search results: {SEARCH_URL}")
             await page.goto(SEARCH_URL, wait_until="networkidle", timeout=30_000)
             await random_delay(2.5, 5.5)
-
-            # Human: spend a moment reading the page
             await simulate_reading(page, duration=random.uniform(3.0, 6.0))
 
-            # ── 3. Locate PDF buttons ─────────────────────────────────────
+            # ── 3. Find PDF buttons ───────────────────────────────────────
             pdf_buttons = await find_pdf_buttons(page)
-
             if not pdf_buttons:
-                log.error("No PDF links found — saving debug HTML for inspection.")
-                await save_debug_html(page, "no_pdf_links")
+                log.error("No PDF buttons found — saving debug HTML.")
+                await save_debug_html(page, "no_pdf_buttons")
                 return
 
-            # Pull table metadata for context
-            table_rows = await extract_table_rows(page)
-
-            # ── 4. Scrape N cases ─────────────────────────────────────────
+            table_rows   = await extract_table_rows(page)
             target_count = min(count, len(pdf_buttons))
-            log.info(f"Scraping {target_count} case(s) from {len(pdf_buttons)} found...")
+            log.info(f"Scraping {target_count} case(s)...")
 
+            # ── 4. Per-case loop ──────────────────────────────────────────
             for i in range(target_count):
-                log.info(f"\n{'─'*50}")
+                log.info(f"\n{'─'*55}")
                 log.info(f"Case {i+1} / {target_count}")
 
-                # Random pre-click reading pause
                 await random_delay(1.5, 4.0)
                 await human_scroll(page)
                 await random_delay(0.5, 1.5)
 
                 btn = pdf_buttons[i]
 
-                # Human-like hover → click
-                await human_hover_and_click(page, btn)
-
-                # Capture the PDF
+                # capture_pdf handles hover + click internally
                 pdf_bytes, filename = await capture_pdf(page, context, btn)
 
                 if pdf_bytes and len(pdf_bytes) > 512:
                     pdf_path = save_pdf(pdf_bytes, filename, i + 1)
-                    row_meta = table_rows[i] if i < len(table_rows) else {}
-                    save_metadata(row_meta, pdf_path)
+                    save_metadata(table_rows[i] if i < len(table_rows) else {}, pdf_path)
                 else:
-                    log.error(f"Case {i+1}: empty or missing PDF content.")
+                    log.error(f"Case {i+1}: no PDF captured.")
                     await save_debug_html(page, f"case_{i+1:04d}_failed")
 
-                # Inter-case delay — longer for more cases to stay under radar
                 if i < target_count - 1:
-                    gap = random.uniform(4.0, 10.0)
+                    gap = random.uniform(5.0, 12.0)
                     log.info(f"Waiting {gap:.1f}s before next case...")
                     await asyncio.sleep(gap)
 
-            log.info("\n" + "━" * 62)
+            log.info("\n" + "━" * 55)
             log.info(f"  Done — {target_count} case(s) scraped.")
             log.info(f"  PDFs → {Path(OUTPUT_DIR).resolve()}")
-            log.info("━" * 62)
+            log.info("━" * 55)
 
         except Exception as exc:
-            log.error(f"Fatal error: {exc}", exc_info=True)
+            log.error(f"Fatal: {exc}", exc_info=True)
             try:
                 await save_debug_html(page, "fatal_error")
             except Exception:
@@ -401,28 +492,26 @@ async def run(count: int = 1, use_tor: bool = False) -> None:
 
         finally:
             await random_delay(2.0, 4.0)
-            await context.close()   # closes the persistent context (and its browser)
-            log.info("Browser closed. Profile saved to browser_profile/")
+            await context.close()
+            log.info("Browser closed. Profile saved.")
 
 
-# ── CLI arg parsing ───────────────────────────────────────────────────────────
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
 def _parse_args() -> tuple[int, bool]:
     args    = sys.argv[1:]
     use_tor = "--tor" in args
     count   = 1
-
     if "--count" in args:
         idx = args.index("--count")
         try:
             count = int(args[idx + 1])
         except (IndexError, ValueError):
-            log.warning("--count requires a number. Defaulting to 1.")
-
+            log.warning("--count requires a number. Using 1.")
     return count, use_tor
 
 
 if __name__ == "__main__":
     n, tor = _parse_args()
-    log.info(f"Starting scraper | cases={n} | tor={tor}")
+    log.info(f"Starting | cases={n} | tor={tor}")
     asyncio.run(run(count=n, use_tor=tor))
